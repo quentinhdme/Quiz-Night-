@@ -1,0 +1,1 @@
+{"round_id": 0, "phase": "lobby", "phase_started_at": null, "paused": false, "pause_started_at": null, "accumulated_pause": 0.0, "question_order": [], "current_q_idx": 0, "host": {"name": null, "pin_hash": null}, "durations": {"write": 60, "answer": 20, "reveal": 3, "rate": 10}}
