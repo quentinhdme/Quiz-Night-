@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import json, os, hashlib, random
+import json, os, hashlib, random, time
 from datetime import datetime, timezone
 
 st.set_page_config(page_title="Quiz Night Runden", page_icon="🕹️", layout="centered")
@@ -115,7 +115,6 @@ with st.sidebar:
     name = st.text_input("Dein Name (einmal)", value=st.session_state["player_name"]).strip()
     if name and name != st.session_state["player_name"]:
         st.session_state["player_name"] = name
-        # register/update player presence in current round
         state = load_state()
         pdf = load_df(PLAYERS_CSV)
         row = {"round_id": state["round_id"], "player": name, "joined_at": datetime.utcnow().isoformat(), "last_seen": datetime.utcnow().isoformat()}
@@ -123,7 +122,7 @@ with st.sidebar:
         save_df(pdf, PLAYERS_CSV)
         st.rerun()
 
-    # heartbeat (update last_seen)
+    # heartbeat
     if st.session_state["player_name"]:
         state = load_state()
         pdf = load_df(PLAYERS_CSV)
@@ -232,19 +231,19 @@ def host_controls():
                 state["paused"] = True
                 state["pause_started_at"] = now_ts()
             save_state(state)
-            st.experimental_rerun()
+            st.rerun()
     with c2:
         if st.button("⏭️ Nächste Phase/Frage"):
             advance(force=True)
-            st.experimental_rerun()
+            st.rerun()
     with c3:
         if st.button("🔁 Runde neu starten"):
             reset_round(new_round=False)
-            st.experimental_rerun()
+            st.rerun()
     with c4:
         if st.button("🆕 Neue Runde"):
             reset_round(new_round=True)
-            st.experimental_rerun()
+            st.rerun()
 
 # ---------- Shared UI Bits ----------
 def phase_header(title, show_progress=True):
@@ -296,7 +295,7 @@ def view_lobby():
                 state["round_id"] = 1
                 save_state(state)
             start_phase("write")
-            st.experimental_rerun()
+            st.rerun()
     else:
         st.write("Warte auf Start der Runde durch den Host.")
 
@@ -345,7 +344,7 @@ def view_write():
                 qdf = pd.concat([qdf, pd.DataFrame([new_row])], ignore_index=True)
                 save_df(qdf, QUESTIONS_CSV)
                 st.success("Gespeichert.")
-                st.experimental_rerun()
+                st.rerun()
 
 def view_answer():
     phase_header("🎮 Phase 2: Beantworten (20s)")
@@ -359,7 +358,6 @@ def view_answer():
 
     st.markdown(f"**Frage {state['current_q_idx']+1}/{len(state['question_order'])}:** {q['question']}")
 
-    # options deterministic
     opts = [q["correct"], q["wrong1"]]
     if isinstance(q["wrong2"], str) and q["wrong2"].strip(): opts.append(q["wrong2"])
     if isinstance(q["wrong3"], str) and q["wrong3"].strip(): opts.append(q["wrong3"])
@@ -371,7 +369,6 @@ def view_answer():
         st.warning("Bitte gib links deinen Namen ein.")
         return
 
-    # Block answering own question
     if name == q["author"]:
         st.info("🙅‍♂️ Das ist deine eigene Frage — du darfst sie nicht beantworten.")
         st.radio("Antwortoptionen (deaktiviert):", opts, index=None, disabled=True)
@@ -398,7 +395,7 @@ def view_answer():
                 adf = pd.concat([adf, pd.DataFrame([new_row])], ignore_index=True)
                 save_df(adf, ANSWERS_CSV)
                 st.success("Antwort gespeichert.")
-                st.experimental_rerun()
+                st.rerun()
 
 def view_reveal():
     phase_header("🔔 Reveal: Richtige Antwort (3s)")
@@ -428,7 +425,6 @@ def view_rate():
         st.warning("Bitte gib links deinen Namen ein.")
         return
 
-    # Block rating own question
     if name == q["author"]:
         st.info("🙅‍♂️ Eigene Frage — Bewertung deaktiviert.")
         st.slider("Sterne (deaktiviert)", 1, 5, 4, disabled=True)
@@ -451,7 +447,7 @@ def view_rate():
             rdf = pd.concat([rdf, pd.DataFrame([new_row])], ignore_index=True)
             save_df(rdf, RATINGS_CSV)
             st.success("Bewertung gespeichert.")
-            st.experimental_rerun()
+            st.rerun()
 
 def compute_scores(round_id):
     qdf = load_df(QUESTIONS_CSV); adf = load_df(ANSWERS_CSV); rdf = load_df(RATINGS_CSV)
@@ -497,7 +493,7 @@ def view_results():
         host_controls()
         if st.button("▶️ Neue Schreib-Phase (60s)"):
             start_phase("write")
-            st.experimental_rerun()
+            st.rerun()
 
 # ---------- Router ----------
 state = load_state()
@@ -527,5 +523,13 @@ elif phase == "results":
 else:
     st.error("Unbekannte Phase. Zurück zur Lobby.")
     reset_round(new_round=False)
+
+# ---------- Auto-refresh once per second during active phases ----------
+if phase in ("write", "answer", "reveal", "rate"):
+    # Don't spam when paused; just stay static
+    st.caption("⏱️ Live-Update aktiv")
+    if not state.get("paused"):
+        time.sleep(1)
+        st.rerun()
 
 st.markdown("<div class='footerq'>Made by Quirlin</div>", unsafe_allow_html=True)
