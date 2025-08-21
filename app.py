@@ -35,6 +35,7 @@ def ensure_files():
             "current_q_idx": 0,
             "host": {"name": None, "pin_hash": None},
             "durations": {"write": 60, "answer": 20, "reveal": 3, "rate": 10},
+            "last_update": datetime.utcnow().isoformat() + "Z",
         }
         with open(STATE_JSON, "w", encoding="utf-8") as f:
             json.dump(init_state, f)
@@ -53,6 +54,7 @@ def load_state():
         return json.load(f)
 
 def save_state(state):
+    state["last_update"] = datetime.utcnow().isoformat() + "Z"
     with open(STATE_JSON, "w", encoding="utf-8") as f:
         json.dump(state, f)
 
@@ -203,7 +205,11 @@ def advance(force=False):
         state["question_order"] = qids
         state["current_q_idx"] = 0
         save_state(state)
-        start_phase("answer")
+        if len(qids) == 0:
+            # keine Fragen -> zurück zur Lobby
+            reset_round(new_round=False)
+        else:
+            start_phase("answer")
     elif state["phase"] == "answer":
         start_phase("reveal")
     elif state["phase"] == "reveal":
@@ -293,7 +299,7 @@ def view_lobby():
         if st.button("▶️ Runde starten (Phase: Frage schreiben, 60s)"):
             if state["round_id"] == 0:
                 state["round_id"] = 1
-                save_state(state)
+            save_state(state)
             start_phase("write")
             st.rerun()
     else:
@@ -455,11 +461,13 @@ def compute_scores(round_id):
     adf = adf[adf["round_id"]==round_id].copy()
     rdf = rdf[rdf["round_id"]==round_id].copy()
 
+    # Spielerpunkte
     if not adf.empty:
         ppts = adf.groupby("player")["is_correct"].sum().mul(10).rename("Spielerpunkte")
     else:
-        ppts = pd.Series(dtype=float)
+        ppts = pd.Series(dtype=float, name="Spielerpunkte")
 
+    # Autorenpunkte
     rows = []
     for _, q in qdf.iterrows():
         qid = int(q["id"])
@@ -475,17 +483,33 @@ def compute_scores(round_id):
         mult = 0.2*stars_avg + 0.4
         rows.append({"author": q["author"], "author_points": base*mult})
     ap = pd.DataFrame(rows)
-    apts = ap.groupby("author")["author_points"].sum().rename("Autorenpunkte") if not ap.empty else pd.Series(dtype=float)
+    if not ap.empty:
+        apts = ap.groupby("author")["author_points"].sum().rename("Autorenpunkte")
+    else:
+        apts = pd.Series(dtype=float, name="Autorenpunkte")
 
-    total = pd.concat([ppts, apts], axis=1).fillna(0.0)
-    total["Gesamt"] = total["Spielerpunkte"] + total["Autorenpunkte"]
-    return total.sort_values("Gesamt", ascending=False).reset_index().rename(columns={"index":"Name"})
+    total = pd.concat([ppts, apts], axis=1)
+
+    if "Spielerpunkte" not in total.columns:
+        total["Spielerpunkte"] = 0.0
+    if "Autorenpunkte" not in total.columns:
+        total["Autorenpunkte"] = 0.0
+
+    total = total.fillna(0.0)
+    total["Gesamt"] = total["Spielerpunkte"].astype(float) + total["Autorenpunkte"].astype(float)
+
+    if total.empty:
+        return pd.DataFrame(columns=["Name", "Spielerpunkte", "Autorenpunkte", "Gesamt"])
+
+    total = total.sort_values("Gesamt", ascending=False).reset_index().rename(columns={"index":"Name"})
+    return total
 
 def view_results():
-    phase_header("🏆 Ergebnisse dieser Runde", show_progress=False)
+    # Kein Progress/Takt mehr nötig
+    st.subheader("🏆 Ergebnisse dieser Runde")
     state = load_state()
     df = compute_scores(state["round_id"])
-    if df.empty:
+    if df is None or df.empty:
         st.info("Noch keine Daten in dieser Runde.")
     else:
         st.dataframe(df.style.format({"Spielerpunkte":"{:.0f}","Autorenpunkte":"{:.1f}","Gesamt":"{:.1f}"}), use_container_width=True)
@@ -524,10 +548,12 @@ else:
     st.error("Unbekannte Phase. Zurück zur Lobby.")
     reset_round(new_round=False)
 
-# ---------- Auto-refresh once per second during active phases ----------
-if phase in ("write", "answer", "reveal", "rate"):
-    # Don't spam when paused; just stay static
-    st.caption("⏱️ Live-Update aktiv")
+# ---------- Auto-refresh once per second across ALL phases (for tight sync) ----------
+# We keep it gentle: 1s tick; when paused, stop ticking.
+state = load_state()
+phase = state["phase"]
+st.caption("⏱️ Live-Update aktiv")
+if phase in ("write", "answer", "reveal", "rate", "lobby"):
     if not state.get("paused"):
         time.sleep(1)
         st.rerun()
