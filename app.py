@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import json, os, time, hashlib, random
+import json, os, hashlib, random
 from datetime import datetime, timezone
 
 st.set_page_config(page_title="Quiz Night Runden", page_icon="🕹️", layout="centered")
@@ -132,7 +132,6 @@ with st.sidebar:
             if mask.any():
                 pdf.loc[mask, "last_seen"] = datetime.utcnow().isoformat()
             else:
-                # auto-register if not present
                 row = {"round_id": state["round_id"], "player": st.session_state["player_name"], "joined_at": datetime.utcnow().isoformat(), "last_seen": datetime.utcnow().isoformat()}
                 pdf = pd.concat([pdf, pd.DataFrame([row])], ignore_index=True)
             save_df(pdf, PLAYERS_CSV)
@@ -200,7 +199,6 @@ def advance(force=False):
         return
     if state["phase"] == "write":
         qdf = load_df(QUESTIONS_CSV)
-        # Runde umfasst alle Fragen der Runde
         qids = qdf[qdf["round_id"] == state["round_id"]]["id"].tolist()
         random.shuffle(qids)
         state["question_order"] = qids
@@ -267,9 +265,8 @@ def phase_header(title, show_progress=True):
     if st.session_state["is_host"]:
         host_controls()
 
-# ---------- Views ----------
+# ---------- Lobby list ----------
 def lobby_list():
-    """Show list of players in the lobby/current round."""
     state = load_state()
     pdf = load_df(PLAYERS_CSV)
     names = []
@@ -286,6 +283,7 @@ def lobby_list():
     else:
         st.caption("Noch keine Spieler in der Lobby.")
 
+# ---------- Views ----------
 def view_lobby():
     state = load_state()
     st.subheader("👥 Lobby")
@@ -310,7 +308,7 @@ def view_write():
         st.warning("Bitte gib links deinen Namen ein.")
         return
 
-    # ensure in lobby list
+    # ensure presence
     pdf = load_df(PLAYERS_CSV)
     if not pdf.empty:
         mask = (pdf["round_id"] == state["round_id"]) & (pdf["player"] == name)
@@ -504,7 +502,15 @@ def view_results():
 # ---------- Router ----------
 state = load_state()
 phase = state["phase"]
-st.markdown(f"**Aktuelle Phase:** {{'lobby':'Lobby','write':'Frage schreiben','answer':'Beantworten','reveal':'Reveal','rate':'Bewerten','results':'Ergebnisse'}.get(phase, phase)}")
+phase_names = {
+    "lobby": "Lobby",
+    "write": "Frage schreiben",
+    "answer": "Beantworten",
+    "reveal": "Reveal",
+    "rate": "Bewerten",
+    "results": "Ergebnisse"
+}
+st.markdown(f"**Aktuelle Phase:** {phase_names.get(phase, phase)}")
 
 if phase == "lobby":
     view_lobby()
